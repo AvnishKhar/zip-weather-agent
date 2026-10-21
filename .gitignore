@@ -1,0 +1,17 @@
+# Virtual environment
+.venv/
+
+# Python-generated files
+__pycache__/
+*.pyc
+
+# API keys and passwords
+.streamlit/secrets.toml
+.env
+
+# Local AI-tool settings
+.agents/
+.claude/
+
+# macOS-generated files
+.DS_Store
