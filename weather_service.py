@@ -41,245 +41,283 @@ def weather_description(code):
     if code is None:
         return "Unknown"
 
-    return WEATHER_CODES.get(int(code), f"Unknown weather code: {code}")
+    return WEATHER_CODES.get(int(code), "Unknown weather condition")
 
 
-def lookup_postal_code(postal_code: str, country_code: str = "US") -> dict:
-    """
-    Convert a postal/ZIP code into a location and coordinates.
+def get_value(data, field, index):
+    """Safely retrieve an item from an Open-Meteo result array."""
+    values = data.get(field, [])
 
-    Example:
-        lookup_postal_code("45202", "US")
-    """
+    if index < len(values):
+        return values[index]
 
-    postal_code = postal_code.strip()
-    country_code = country_code.strip().upper()
-
-    if not postal_code:
-        return {
-            "success": False,
-            "error": "A postal or ZIP code is required.",
-        }
-
-    if len(country_code) != 2:
-        return {
-            "success": False,
-            "error": "Use a two-letter country code such as US, CA, GB or IN.",
-        }
-
-    safe_country = quote(country_code.lower(), safe="")
-    safe_postal_code = quote(postal_code, safe="")
-
-    url = (
-        f"https://api.zippopotam.us/"
-        f"{safe_country}/{safe_postal_code}"
-    )
-
-    try:
-        response = requests.get(url, timeout=10)
-
-        if response.status_code == 404:
-            return {
-                "success": False,
-                "error": (
-                    f"Postal code {postal_code} was not found "
-                    f"for country {country_code}."
-                ),
-            }
-
-        response.raise_for_status()
-        data = response.json()
-
-    except requests.RequestException as error:
-        return {
-            "success": False,
-            "error": f"Postal-code service failed: {error}",
-        }
-
-    places = data.get("places", [])
-
-    if not places:
-        return {
-            "success": False,
-            "error": "The postal-code service returned no locations.",
-        }
-
-    place = places[0]
-
-    try:
-        latitude = float(place["latitude"])
-        longitude = float(place["longitude"])
-    except (KeyError, TypeError, ValueError):
-        return {
-            "success": False,
-            "error": "The location did not contain valid coordinates.",
-        }
-
-    return {
-        "success": True,
-        "postal_code": data.get("post code", postal_code),
-        "country": data.get("country"),
-        "country_code": data.get("country abbreviation", country_code),
-        "place_name": place.get("place name"),
-        "state": place.get("state"),
-        "latitude": latitude,
-        "longitude": longitude,
-    }
+    return None
 
 
 def get_weather(
-    postal_code: str,
-    country_code: str = "US",
-    unit: str = "fahrenheit",
+    zip_code: str,
+    forecast_type: str = "current",
+    days: int = 7,
+    hours: int = 24
 ) -> dict:
     """
-    Get current weather and a three-day forecast for a postal code.
+    Get current, hourly or daily weather for a US ZIP code.
 
     Args:
-        postal_code: ZIP or postal code, such as 45202.
-        country_code: Two-letter country code; defaults to US.
-        unit: Either fahrenheit or celsius.
+        zip_code: Five-digit US ZIP code.
+        forecast_type: current, hourly, daily or all.
+        days: Number of daily forecast days from 1 through 10.
+        hours: Number of hourly forecast hours from 1 through 48.
+
+    Returns:
+        A dictionary containing location and weather information.
     """
 
-    unit = unit.strip().lower()
+    zip_code = str(zip_code).strip()
+    forecast_type = forecast_type.lower().strip()
 
-    if unit not in {"fahrenheit", "celsius"}:
+    if len(zip_code) != 5 or not zip_code.isdigit():
         return {
-            "success": False,
-            "error": "Unit must be fahrenheit or celsius.",
+            "error": "Please provide a valid five-digit US ZIP code."
         }
 
-    # First convert the postal code into latitude and longitude.
-    location = lookup_postal_code(postal_code, country_code)
+    allowed_types = {"current", "hourly", "daily", "all"}
 
-    if not location["success"]:
-        return location
+    if forecast_type not in allowed_types:
+        return {
+            "error": (
+                "forecast_type must be current, hourly, daily or all."
+            )
+        }
 
-    if unit == "fahrenheit":
-        temperature_unit = "fahrenheit"
-        wind_speed_unit = "mph"
-        precipitation_unit = "inch"
-    else:
-        temperature_unit = "celsius"
-        wind_speed_unit = "kmh"
-        precipitation_unit = "mm"
-
-    weather_url = "https://api.open-meteo.com/v1/forecast"
-
-    parameters = {
-        "latitude": location["latitude"],
-        "longitude": location["longitude"],
-        "current": (
-            "temperature_2m,"
-            "apparent_temperature,"
-            "relative_humidity_2m,"
-            "precipitation,"
-            "weather_code,"
-            "wind_speed_10m"
-        ),
-        "daily": (
-            "weather_code,"
-            "temperature_2m_max,"
-            "temperature_2m_min,"
-            "precipitation_probability_max"
-        ),
-        "temperature_unit": temperature_unit,
-        "wind_speed_unit": wind_speed_unit,
-        "precipitation_unit": precipitation_unit,
-        "timezone": "auto",
-        "forecast_days": 3,
-    }
+    # Prevent excessively large API and Gemini responses.
+    days = max(1, min(int(days), 10))
+    hours = max(1, min(int(hours), 48))
 
     try:
-        response = requests.get(
+        # Step 1: Convert ZIP code into coordinates.
+        location_url = (
+            f"https://api.zippopotam.us/us/{zip_code}"
+        )
+
+        location_response = requests.get(
+            location_url,
+            timeout=10
+        )
+
+        if location_response.status_code == 404:
+            return {
+                "error": f"ZIP code {zip_code} was not found."
+            }
+
+        location_response.raise_for_status()
+        location_data = location_response.json()
+
+        place = location_data["places"][0]
+
+        latitude = float(place["latitude"])
+        longitude = float(place["longitude"])
+        city = place["place name"]
+        state = place["state abbreviation"]
+
+        # Step 2: Build the Open-Meteo request.
+        weather_url = "https://api.open-meteo.com/v1/forecast"
+
+        parameters = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "timezone": "auto",
+            "temperature_unit": "fahrenheit",
+            "wind_speed_unit": "mph",
+            "precipitation_unit": "inch",
+        }
+
+        if forecast_type in {"current", "all"}:
+            parameters["current"] = (
+                "temperature_2m,"
+                "apparent_temperature,"
+                "relative_humidity_2m,"
+                "precipitation,"
+                "weather_code,"
+                "wind_speed_10m,"
+                "wind_gusts_10m"
+            )
+
+        if forecast_type in {"hourly", "all"}:
+            parameters["hourly"] = (
+                "temperature_2m,"
+                "apparent_temperature,"
+                "precipitation_probability,"
+                "weather_code,"
+                "wind_speed_10m"
+            )
+
+            # Start at the current hour.
+            parameters["forecast_hours"] = hours
+
+        if forecast_type in {"daily", "all"}:
+            parameters["daily"] = (
+                "weather_code,"
+                "temperature_2m_max,"
+                "temperature_2m_min,"
+                "precipitation_probability_max,"
+                "wind_speed_10m_max,"
+                "sunrise,"
+                "sunset"
+            )
+
+            parameters["forecast_days"] = days
+
+        weather_response = requests.get(
             weather_url,
             params=parameters,
-            timeout=15,
+            timeout=15
         )
-        response.raise_for_status()
-        data = response.json()
+
+        weather_response.raise_for_status()
+        weather_data = weather_response.json()
+
+        result = {
+            "location": {
+                "zip_code": zip_code,
+                "city": city,
+                "state": state,
+                "latitude": latitude,
+                "longitude": longitude,
+                "timezone": weather_data.get("timezone"),
+            },
+            "requested_forecast_type": forecast_type,
+        }
+
+        # Step 3: Format current weather.
+        if "current" in weather_data:
+            current = weather_data["current"]
+
+            result["current"] = {
+                "time": current.get("time"),
+                "condition": weather_description(
+                    current.get("weather_code")
+                ),
+                "temperature_f": current.get("temperature_2m"),
+                "feels_like_f": current.get(
+                    "apparent_temperature"
+                ),
+                "humidity_percent": current.get(
+                    "relative_humidity_2m"
+                ),
+                "precipitation_inches": current.get(
+                    "precipitation"
+                ),
+                "wind_mph": current.get("wind_speed_10m"),
+                "wind_gust_mph": current.get(
+                    "wind_gusts_10m"
+                ),
+            }
+
+        # Step 4: Format hourly forecast.
+        if "hourly" in weather_data:
+            hourly_data = weather_data["hourly"]
+            times = hourly_data.get("time", [])
+            hourly_forecast = []
+
+            for index, forecast_time in enumerate(times):
+                weather_code = get_value(
+                    hourly_data,
+                    "weather_code",
+                    index
+                )
+
+                hourly_forecast.append({
+                    "time": forecast_time,
+                    "condition": weather_description(
+                        weather_code
+                    ),
+                    "temperature_f": get_value(
+                        hourly_data,
+                        "temperature_2m",
+                        index
+                    ),
+                    "feels_like_f": get_value(
+                        hourly_data,
+                        "apparent_temperature",
+                        index
+                    ),
+                    "precipitation_probability_percent":
+                        get_value(
+                            hourly_data,
+                            "precipitation_probability",
+                            index
+                        ),
+                    "wind_mph": get_value(
+                        hourly_data,
+                        "wind_speed_10m",
+                        index
+                    ),
+                })
+
+            result["hourly_forecast"] = hourly_forecast
+
+        # Step 5: Format daily forecast.
+        if "daily" in weather_data:
+            daily_data = weather_data["daily"]
+            dates = daily_data.get("time", [])
+            daily_forecast = []
+
+            for index, forecast_date in enumerate(dates):
+                weather_code = get_value(
+                    daily_data,
+                    "weather_code",
+                    index
+                )
+
+                daily_forecast.append({
+                    "date": forecast_date,
+                    "condition": weather_description(
+                        weather_code
+                    ),
+                    "high_f": get_value(
+                        daily_data,
+                        "temperature_2m_max",
+                        index
+                    ),
+                    "low_f": get_value(
+                        daily_data,
+                        "temperature_2m_min",
+                        index
+                    ),
+                    "precipitation_probability_percent":
+                        get_value(
+                            daily_data,
+                            "precipitation_probability_max",
+                            index
+                        ),
+                    "maximum_wind_mph": get_value(
+                        daily_data,
+                        "wind_speed_10m_max",
+                        index
+                    ),
+                    "sunrise": get_value(
+                        daily_data,
+                        "sunrise",
+                        index
+                    ),
+                    "sunset": get_value(
+                        daily_data,
+                        "sunset",
+                        index
+                    ),
+                })
+
+            result["daily_forecast"] = daily_forecast
+
+        return result
 
     except requests.RequestException as error:
         return {
-            "success": False,
-            "error": f"Weather service failed: {error}",
+            "error": f"Weather service request failed: {error}"
         }
 
-    current = data.get("current", {})
-    current_units = data.get("current_units", {})
-    daily = data.get("daily", {})
-    daily_units = data.get("daily_units", {})
-
-    forecast = []
-
-    forecast_dates = daily.get("time", [])
-
-    for index, forecast_date in enumerate(forecast_dates):
-        forecast.append(
-            {
-                "date": forecast_date,
-                "condition": weather_description(
-                    daily.get("weather_code", [None])[index]
-                ),
-                "high": daily.get(
-                    "temperature_2m_max", [None]
-                )[index],
-                "low": daily.get(
-                    "temperature_2m_min", [None]
-                )[index],
-                "precipitation_probability": daily.get(
-                    "precipitation_probability_max", [None]
-                )[index],
-            }
-        )
-
-    location_name = ", ".join(
-        part
-        for part in [
-            location.get("place_name"),
-            location.get("state"),
-            location.get("country"),
-        ]
-        if part
-    )
-
-    return {
-        "success": True,
-        "location": location_name,
-        "postal_code": location["postal_code"],
-        "coordinates": {
-            "latitude": location["latitude"],
-            "longitude": location["longitude"],
-        },
-        "timezone": data.get("timezone"),
-        "current": {
-            "time": current.get("time"),
-            "condition": weather_description(
-                current.get("weather_code")
-            ),
-            "temperature": current.get("temperature_2m"),
-            "temperature_unit": current_units.get("temperature_2m"),
-            "feels_like": current.get("apparent_temperature"),
-            "humidity": current.get("relative_humidity_2m"),
-            "humidity_unit": current_units.get(
-                "relative_humidity_2m"
-            ),
-            "precipitation": current.get("precipitation"),
-            "precipitation_unit": current_units.get("precipitation"),
-            "wind_speed": current.get("wind_speed_10m"),
-            "wind_speed_unit": current_units.get("wind_speed_10m"),
-        },
-        "forecast_units": {
-            "temperature": daily_units.get("temperature_2m_max"),
-            "precipitation_probability": daily_units.get(
-                "precipitation_probability_max"
-            ),
-        },
-        "three_day_forecast": forecast,
-    }
-
-
-if __name__ == "__main__":
-    from pprint import pprint
-
-    pprint(get_weather("45202", "US", "fahrenheit"))
+    except (KeyError, IndexError, TypeError, ValueError) as error:
+        return {
+            "error": f"Weather data could not be processed: {error}"
+        }
