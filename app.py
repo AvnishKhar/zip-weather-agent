@@ -1,5 +1,7 @@
 import json
 import os
+import re
+import time
 
 import streamlit as st
 from google import genai
@@ -63,6 +65,13 @@ def read_setting(name, default=None):
 
 API_KEY = read_setting("GEMINI_API_KEY")
 MODEL_NAME = read_setting("GEMINI_MODEL", "gemini-flash-latest")
+FALLBACK_MODEL_NAME = read_setting(
+    "GEMINI_FALLBACK_MODEL",
+    "gemini-flash-lite-latest",
+)
+
+# Status codes that usually mean "busy, try again shortly".
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 APP_PASSWORD = read_setting("APP_PASSWORD")
 
 
@@ -190,13 +199,26 @@ weather condition on a separate line.
 """
 
 
+def is_retryable_error(error):
+    """Return True when Gemini is temporarily overloaded or unavailable."""
+
+    status_code = getattr(error, "status_code", None)
+
+    if status_code is None:
+        status_code = getattr(error, "code", None)
+
+    return status_code in RETRYABLE_STATUS_CODES
+
+
 def create_interaction(input_value, previous_interaction_id=None):
     """
     Send either a user message or a tool result to Gemini.
+
+    Retries temporary errors (such as 503 high demand) with backoff,
+    then tries the fallback model before giving up.
     """
 
     arguments = {
-        "model": MODEL_NAME,
         "input": input_value,
         "system_instruction": SYSTEM_INSTRUCTION,
         "tools": [weather_tool],
@@ -207,7 +229,41 @@ def create_interaction(input_value, previous_interaction_id=None):
             previous_interaction_id
         )
 
-    return client.interactions.create(**arguments)
+    models = [MODEL_NAME]
+
+    if FALLBACK_MODEL_NAME and FALLBACK_MODEL_NAME != MODEL_NAME:
+        models.append(FALLBACK_MODEL_NAME)
+
+    last_error = None
+
+    for model in models:
+        for attempt in range(3):
+            try:
+                return client.interactions.create(
+                    model=model,
+                    **arguments,
+                )
+            except Exception as error:
+                if not is_retryable_error(error):
+                    raise
+
+                last_error = error
+                print(
+                    f"GEMINI BUSY ({model}, attempt {attempt + 1}):",
+                    repr(error),
+                    flush=True,
+                )
+                time.sleep(2 ** attempt)
+
+    raise last_error
+
+
+def extract_zip_code(text):
+    """Return the first five-digit ZIP code in the text, if any."""
+
+    match = re.search(r"\b\d{5}\b", text)
+
+    return match.group(0) if match else None
 
 
 def run_weather_tool(arguments):
@@ -502,10 +558,42 @@ if user_message:
                 )
 
             except Exception as error:
-                answer = (
-                    "I could not complete the request. "
-                    f"Technical details: {error}"
-                )
+                print("AGENT ERROR:", repr(error), flush=True)
+
+                zip_code = extract_zip_code(user_message)
+
+                if is_retryable_error(error) and zip_code:
+                    # Gemini is busy, but the weather data does not
+                    # depend on it, so look the ZIP code up directly.
+                    try:
+                        result = run_weather_tool(
+                            {
+                                "zip_code": zip_code,
+                                "forecast_type": "current",
+                            }
+                        )
+                        answer = format_weather_response(result)
+                    except Exception as weather_error:
+                        print(
+                            "WEATHER TOOL ERROR:",
+                            repr(weather_error),
+                            flush=True,
+                        )
+                        answer = (
+                            "The weather service is not responding "
+                            "right now. Please try again in a moment."
+                        )
+                elif is_retryable_error(error):
+                    answer = (
+                        "The AI service is busy right now. Please try "
+                        "again in a moment, or include a five-digit "
+                        "ZIP code to get current conditions directly."
+                    )
+                else:
+                    answer = (
+                        "I could not complete the request. "
+                        f"Technical details: {error}"
+                    )
 
         st.markdown(answer)
 
