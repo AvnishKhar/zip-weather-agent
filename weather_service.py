@@ -190,7 +190,8 @@ def get_weather(
                 "precipitation_probability,"
                 "weather_code,"
                 "wind_speed_10m,"
-                "wind_direction_10m"
+                "wind_direction_10m,"
+                "is_day"
             )
 
             # Start at the current hour.
@@ -302,6 +303,12 @@ def get_weather(
                             index
                         )
                     ),
+                    # Open-Meteo returns 1 for daylight and 0 for night.
+                    "is_day": get_value(
+                        hourly_data,
+                        "is_day",
+                        index
+                    ) != 0,
                 })
 
             result["hourly_forecast"] = hourly_forecast

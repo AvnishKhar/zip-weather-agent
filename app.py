@@ -400,33 +400,98 @@ ICON_BASE_URL = (
 )
 
 
-def weather_icon(condition):
-    """Return an animated icon that matches the weather condition."""
+def weather_category(condition):
+    """Group a condition description into a simple weather category."""
 
     text = str(condition).lower()
 
     if "thunder" in text:
-        name = "thunderstorms-rain"
-    elif "hail" in text:
-        name = "hail"
-    elif "freezing" in text:
-        name = "sleet"
-    elif "snow" in text:
-        name = "snow"
-    elif "drizzle" in text:
-        name = "drizzle"
-    elif any(word in text for word in ["rain", "shower"]):
-        name = "rain"
-    elif "fog" in text:
-        name = "fog"
-    elif "overcast" in text:
-        name = "overcast"
-    elif "partly" in text:
-        name = "partly-cloudy-day"
-    elif "cloud" in text:
-        name = "cloudy"
-    else:
-        name = "clear-day"
+        return "thunder"
+    if "hail" in text:
+        return "hail"
+    if "freezing" in text:
+        return "sleet"
+    if "snow" in text:
+        return "snow"
+    if "drizzle" in text:
+        return "drizzle"
+    if any(word in text for word in ["rain", "shower"]):
+        return "rain"
+    if "fog" in text:
+        return "fog"
+    if "overcast" in text:
+        return "overcast"
+    if "partly" in text:
+        return "partly"
+    if "cloud" in text:
+        return "cloudy"
+
+    return "clear"
+
+
+ICON_NAMES = {
+    "thunder": "thunderstorms-rain",
+    "hail": "hail",
+    "sleet": "sleet",
+    "snow": "snow",
+    "drizzle": "drizzle",
+    "rain": "rain",
+    "fog": "fog",
+    "overcast": "overcast",
+    "partly": "partly-cloudy-day",
+    "cloudy": "cloudy",
+    "clear": "clear-day",
+}
+
+NIGHT_ICON_NAMES = {
+    "partly": "partly-cloudy-night",
+    "clear": "clear-night",
+}
+
+# Translucent gradients read well in both light and dark themes.
+ROW_BACKGROUNDS = {
+    "thunder": "linear-gradient(90deg, rgba(91,33,182,.45), rgba(30,41,59,.25))",
+    "hail": "linear-gradient(90deg, rgba(148,163,184,.40), rgba(59,130,246,.15))",
+    "sleet": "linear-gradient(90deg, rgba(148,163,184,.35), rgba(186,230,253,.20))",
+    "snow": "linear-gradient(90deg, rgba(224,242,254,.45), rgba(186,230,253,.15))",
+    "drizzle": "linear-gradient(90deg, rgba(96,165,250,.30), rgba(148,163,184,.15))",
+    "rain": "linear-gradient(90deg, rgba(37,99,235,.40), rgba(71,85,105,.20))",
+    "fog": "linear-gradient(90deg, rgba(203,213,225,.35), rgba(148,163,184,.10))",
+    "overcast": "linear-gradient(90deg, rgba(100,116,139,.40), rgba(148,163,184,.15))",
+    "partly": "linear-gradient(90deg, rgba(251,191,36,.30), rgba(148,163,184,.20))",
+    "cloudy": "linear-gradient(90deg, rgba(148,163,184,.35), rgba(203,213,225,.15))",
+    "clear": "linear-gradient(90deg, rgba(251,191,36,.40), rgba(56,189,248,.20))",
+}
+
+NIGHT_ROW_BACKGROUNDS = {
+    "partly": "linear-gradient(90deg, rgba(30,58,138,.50), rgba(100,116,139,.20))",
+    "clear": "linear-gradient(90deg, rgba(30,27,75,.65), rgba(30,58,138,.30))",
+}
+
+
+def weather_row(content, condition, is_day=True):
+    """Wrap one forecast line in a weather-themed background."""
+
+    category = weather_category(condition)
+    background = ROW_BACKGROUNDS[category]
+
+    if not is_day:
+        background = NIGHT_ROW_BACKGROUNDS.get(category, background)
+
+    return (
+        f'<div style="background:{background};border-radius:10px;'
+        f'padding:0.35rem 0.75rem;margin:0.3rem 0;">{content}</div>'
+    )
+
+
+def weather_icon(condition, is_day=True):
+    """Return an animated icon that matches the weather condition."""
+
+    category = weather_category(condition)
+    name = ICON_NAMES[category]
+
+    if not is_day:
+        name = NIGHT_ICON_NAMES.get(category, name)
 
     return (
         f'<img src="{ICON_BASE_URL}{name}.svg" alt="" '
@@ -498,18 +563,24 @@ def format_weather_response(result):
 
         for item in hourly:
             condition = item.get("condition", "Unknown")
+            is_day = item.get("is_day", True)
 
+            # Rows are raw HTML, so use <b> rather than Markdown **.
             lines.append(
-                f"- **{item.get('time', 'N/A')}** — "
-                f"{weather_icon(condition)} {condition}, "
-                f"🌡️ {display_value(item.get('temperature_f'), '°F')}, "
-                f"rain "
-                f"{display_value(item.get('precipitation_probability_percent'), '%')}, "
-                f"💨 {display_value(item.get('wind_mph'), ' mph')}"
-                + (
-                    f" {item['wind_direction']}"
-                    if item.get("wind_direction")
-                    else ""
+                weather_row(
+                    f"<b>{item.get('time', 'N/A')}</b> — "
+                    f"{weather_icon(condition, is_day)} {condition}, "
+                    f"🌡️ {display_value(item.get('temperature_f'), '°F')}, "
+                    f"rain "
+                    f"{display_value(item.get('precipitation_probability_percent'), '%')}, "
+                    f"💨 {display_value(item.get('wind_mph'), ' mph')}"
+                    + (
+                        f" {item['wind_direction']}"
+                        if item.get("wind_direction")
+                        else ""
+                    ),
+                    condition,
+                    is_day,
                 )
             )
 
@@ -526,16 +597,19 @@ def format_weather_response(result):
             condition = item.get("condition", "Unknown")
 
             lines.append(
-                f"- **{item.get('date', 'N/A')}** — "
-                f"{weather_icon(condition)} {condition}; "
-                f"high "
-                f"{display_value(item.get('high_f'), '°F')}, "
-                f"low "
-                f"{display_value(item.get('low_f'), '°F')}; "
-                f"rain "
-                f"{display_value(item.get('precipitation_probability_percent'), '%')}; "
-                f"maximum wind "
-                f"{display_value(item.get('maximum_wind_mph'), ' mph')}"
+                weather_row(
+                    f"<b>{item.get('date', 'N/A')}</b> — "
+                    f"{weather_icon(condition)} {condition}; "
+                    f"high "
+                    f"{display_value(item.get('high_f'), '°F')}, "
+                    f"low "
+                    f"{display_value(item.get('low_f'), '°F')}; "
+                    f"rain "
+                    f"{display_value(item.get('precipitation_probability_percent'), '%')}; "
+                    f"maximum wind "
+                    f"{display_value(item.get('maximum_wind_mph'), ' mph')}",
+                    condition,
+                )
             )
 
         sections.append(
