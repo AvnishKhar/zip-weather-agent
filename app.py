@@ -62,7 +62,7 @@ def read_setting(name, default=None):
 
 
 API_KEY = read_setting("GEMINI_API_KEY")
-MODEL_NAME = read_setting("GEMINI_MODEL", "gemini-3.5-flash-lite")
+MODEL_NAME = read_setting("GEMINI_MODEL", "gemini-3.5-flash-latest")
 APP_PASSWORD = read_setting("APP_PASSWORD")
 
 
