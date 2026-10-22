@@ -237,7 +237,7 @@ def create_interaction(input_value, previous_interaction_id=None):
     last_error = None
 
     for model in models:
-        for attempt in range(3):
+        for attempt in range(2):
             try:
                 return client.interactions.create(
                     model=model,
@@ -253,7 +253,15 @@ def create_interaction(input_value, previous_interaction_id=None):
                     repr(error),
                     flush=True,
                 )
-                time.sleep(2 ** attempt)
+
+                # A rate limit (429) will not clear in a second or two,
+                # and retrying only uses more quota, so move straight
+                # on to the next model.
+                if getattr(error, "status_code", None) == 429:
+                    break
+
+                if attempt == 0:
+                    time.sleep(1)
 
     raise last_error
 
@@ -264,6 +272,25 @@ def extract_zip_code(text):
     match = re.search(r"\b\d{5}\b", text)
 
     return match.group(0) if match else None
+
+
+def direct_weather_answer(zip_code):
+    """Look up current conditions without going through Gemini."""
+
+    try:
+        result = run_weather_tool(
+            {
+                "zip_code": zip_code,
+                "forecast_type": "current",
+            }
+        )
+        return format_weather_response(result)
+    except Exception as error:
+        print("WEATHER TOOL ERROR:", repr(error), flush=True)
+        return (
+            "The weather service is not responding "
+            "right now. Please try again in a moment."
+        )
 
 
 def run_weather_tool(arguments):
@@ -548,14 +575,19 @@ if user_message:
     with st.chat_message("assistant"):
         with st.spinner("Checking the weather..."):
             try:
-                answer, interaction_id = ask_agent(
-                    user_message,
-                    st.session_state.previous_interaction_id,
-                )
+                # A bare ZIP code needs no AI, so skip Gemini and
+                # save quota.
+                if re.fullmatch(r"\s*\d{5}\s*", user_message):
+                    answer = direct_weather_answer(user_message.strip())
+                else:
+                    answer, interaction_id = ask_agent(
+                        user_message,
+                        st.session_state.previous_interaction_id,
+                    )
 
-                st.session_state.previous_interaction_id = (
-                    interaction_id
-                )
+                    st.session_state.previous_interaction_id = (
+                        interaction_id
+                    )
 
             except Exception as error:
                 print("AGENT ERROR:", repr(error), flush=True)
@@ -565,24 +597,7 @@ if user_message:
                 if is_retryable_error(error) and zip_code:
                     # Gemini is busy, but the weather data does not
                     # depend on it, so look the ZIP code up directly.
-                    try:
-                        result = run_weather_tool(
-                            {
-                                "zip_code": zip_code,
-                                "forecast_type": "current",
-                            }
-                        )
-                        answer = format_weather_response(result)
-                    except Exception as weather_error:
-                        print(
-                            "WEATHER TOOL ERROR:",
-                            repr(weather_error),
-                            flush=True,
-                        )
-                        answer = (
-                            "The weather service is not responding "
-                            "right now. Please try again in a moment."
-                        )
+                    answer = direct_weather_answer(zip_code)
                 elif is_retryable_error(error):
                     answer = (
                         "The AI service is busy right now. Please try "
