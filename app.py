@@ -265,10 +265,16 @@ def ask_agent(user_message, previous_interaction_id=None):
                 try:
                     result = run_weather_tool(arguments)
                 except Exception as error:
-                    result = {
-                        "success": False,
+                   print(
+                       "WEATHER TOOL ERROR:",
+                       repr(error),
+                       flush=True,
+                   )
+
+                   result = {
+                       "success": False,
                         "error": f"Weather tool failed: {error}",
-                    }
+                   }     
             else:
                 result = {
                     "success": False,
