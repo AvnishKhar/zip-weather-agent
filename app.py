@@ -94,7 +94,7 @@ if not API_KEY:
 
 client = genai.Client(
     api_key=API_KEY,
-    http_options=types.HttpOptions(timeout=30_000),
+    http_options=types.HttpOptions(timeout=90_000),
 )
 
 
