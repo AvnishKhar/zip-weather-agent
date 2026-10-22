@@ -24,7 +24,7 @@ st.markdown(
     }
 
     .weather-heading {
-        color: white;
+        color: var(--text-color);
         font-size: clamp(2.5rem, 5vw, 3.5rem);
         font-weight: 700;
         line-height: 1.15;
