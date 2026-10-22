@@ -274,16 +274,81 @@ def extract_zip_code(text):
     return match.group(0) if match else None
 
 
-def direct_weather_answer(zip_code):
-    """Look up current conditions without going through Gemini."""
+# Words that need Gemini's judgment rather than a plain lookup.
+COMPLEX_WORDS = [
+    "tomorrow", "weekend", "monday", "tuesday", "wednesday",
+    "thursday", "friday", "saturday", "sunday", "rain", "snow",
+    "storm", "umbrella", "jacket", "coat", "should", "will",
+    "compare", "versus", " vs", "best", "why",
+]
+
+WEATHER_WORDS = [
+    "weather", "temperature", "temp", "conditions", "current",
+    "now", "forecast", "hourly", "hours", "tonight", "daily",
+    "week", "day", "extended",
+]
+
+
+def parse_simple_request(text):
+    """
+    Turn a simple weather request into get_weather arguments,
+    or return None when Gemini should handle it.
+    """
+
+    zip_codes = re.findall(r"\b\d{5}\b", text)
+
+    # Exactly one ZIP code keeps the request unambiguous.
+    if len(zip_codes) != 1:
+        return None
+
+    zip_code = zip_codes[0]
+    lowered = text.lower()
+
+    if lowered.strip() == zip_code:
+        return {"zip_code": zip_code, "forecast_type": "current"}
+
+    if any(word in lowered for word in COMPLEX_WORDS):
+        return None
+
+    if not any(word in lowered for word in WEATHER_WORDS):
+        return None
+
+    wants_hourly = any(
+        word in lowered
+        for word in ["hourly", "hour", "tonight", "later today"]
+    )
+    # Match "day" as a whole word so "today" does not count.
+    wants_daily = bool(
+        re.search(r"\bdays?\b|daily|week|extended", lowered)
+    )
+
+    arguments = {"zip_code": zip_code, "forecast_type": "current"}
+
+    if wants_hourly and wants_daily:
+        arguments["forecast_type"] = "all"
+    elif wants_hourly:
+        arguments["forecast_type"] = "hourly"
+    elif wants_daily:
+        arguments["forecast_type"] = "daily"
+    elif "forecast" in lowered:
+        arguments["forecast_type"] = "daily"
+
+    hours_match = re.search(r"(\d{1,2})\s*(?:-\s*)?hours?", lowered)
+
+    if hours_match:
+        arguments["hours"] = min(max(int(hours_match.group(1)), 1), 48)
+
+    if re.search(r"\b(10|ten)[\s-]*days?\b", lowered):
+        arguments["days"] = 10
+
+    return arguments
+
+
+def direct_weather_answer(arguments):
+    """Look up the weather without going through Gemini."""
 
     try:
-        result = run_weather_tool(
-            {
-                "zip_code": zip_code,
-                "forecast_type": "current",
-            }
-        )
+        result = run_weather_tool(arguments)
         return format_weather_response(result)
     except Exception as error:
         print("WEATHER TOOL ERROR:", repr(error), flush=True)
@@ -575,10 +640,12 @@ if user_message:
     with st.chat_message("assistant"):
         with st.spinner("Checking the weather..."):
             try:
-                # A bare ZIP code needs no AI, so skip Gemini and
+                # Simple requests need no AI, so skip Gemini and
                 # save quota.
-                if re.fullmatch(r"\s*\d{5}\s*", user_message):
-                    answer = direct_weather_answer(user_message.strip())
+                simple_request = parse_simple_request(user_message)
+
+                if simple_request:
+                    answer = direct_weather_answer(simple_request)
                 else:
                     answer, interaction_id = ask_agent(
                         user_message,
@@ -597,7 +664,12 @@ if user_message:
                 if is_retryable_error(error) and zip_code:
                     # Gemini is busy, but the weather data does not
                     # depend on it, so look the ZIP code up directly.
-                    answer = direct_weather_answer(zip_code)
+                    answer = direct_weather_answer(
+                        {
+                            "zip_code": zip_code,
+                            "forecast_type": "current",
+                        }
+                    )
                 elif is_retryable_error(error):
                     answer = (
                         "The AI service is busy right now. Please try "
