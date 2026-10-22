@@ -44,6 +44,19 @@ def weather_description(code):
     return WEATHER_CODES.get(int(code), "Unknown weather condition")
 
 
+def compass_direction(degrees):
+    """Convert a wind direction in degrees into a compass point."""
+    if degrees is None:
+        return None
+
+    points = [
+        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+        "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+    ]
+
+    return points[round(float(degrees) / 22.5) % 16]
+
+
 def get_value(data, field, index):
     """Safely retrieve an item from an Open-Meteo result array."""
     values = data.get(field, [])
@@ -149,7 +162,8 @@ def get_weather(
                 "apparent_temperature,"
                 "precipitation_probability,"
                 "weather_code,"
-                "wind_speed_10m"
+                "wind_speed_10m,"
+                "wind_direction_10m"
             )
 
             # Start at the current hour.
@@ -252,6 +266,14 @@ def get_weather(
                         hourly_data,
                         "wind_speed_10m",
                         index
+                    ),
+                    # Compass direction the wind blows from.
+                    "wind_direction": compass_direction(
+                        get_value(
+                            hourly_data,
+                            "wind_direction_10m",
+                            index
+                        )
                     ),
                 })
 

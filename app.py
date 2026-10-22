@@ -470,6 +470,11 @@ def format_weather_response(result):
                 f"rain "
                 f"{display_value(item.get('precipitation_probability_percent'), '%')}, "
                 f"💨 {display_value(item.get('wind_mph'), ' mph')}"
+                + (
+                    f" {item['wind_direction']}"
+                    if item.get("wind_direction")
+                    else ""
+                )
             )
 
         sections.append(
