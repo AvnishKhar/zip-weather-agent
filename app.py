@@ -3,6 +3,7 @@ import os
 
 import streamlit as st
 from google import genai
+from google.genai import types
 
 from weather_service import get_weather
 
@@ -61,7 +62,7 @@ def read_setting(name, default=None):
 
 
 API_KEY = read_setting("GEMINI_API_KEY")
-MODEL_NAME = read_setting("GEMINI_MODEL", "gemini-3.8-flash")
+MODEL_NAME = read_setting("GEMINI_MODEL", "gemini-3.5-flash-lite")
 APP_PASSWORD = read_setting("APP_PASSWORD")
 
 
@@ -91,7 +92,10 @@ if not API_KEY:
     st.stop()
 
 
-client = genai.Client(api_key=API_KEY)
+client = genai.Client(
+    api_key=API_KEY,
+    http_options=types.HttpOptions(timeout=30_000),
+)
 
 
 # This is the function description Gemini sees.
