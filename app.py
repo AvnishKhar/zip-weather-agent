@@ -7,7 +7,7 @@ import streamlit as st
 from google import genai
 from google.genai import types
 
-from weather_service import get_weather
+from weather_service import get_radar_url, get_weather
 
 
 st.set_page_config(
@@ -376,26 +376,62 @@ def run_weather_tool(arguments):
      # This line runs only after get_weather completes successfully.
     if "error" not in result:
      st.session_state.weather_data_used = True
+     # Remember the location so the radar can be shown after the answer.
+     st.session_state.last_location = result.get("location")
     print("TOOL RESULT:", result)
-     
+
     return result
+
+
+@st.cache_data(ttl=24 * 60 * 60, show_spinner=False)
+def cached_radar_url(latitude, longitude):
+    """The nearest radar station never changes, so cache it per location."""
+
+    return get_radar_url(latitude, longitude)
+
+
+RADAR_CAPTION = "Live radar loop from the nearest NWS radar station"
+
+
+# Animated Meteocons icons (MIT license), loaded by the browser from a CDN.
+ICON_BASE_URL = (
+    "https://cdn.jsdelivr.net/gh/basmilius/weather-icons@2.0.0/"
+    "production/fill/all/"
+)
+
+
 def weather_icon(condition):
-    """Return an icon that matches the weather condition."""
+    """Return an animated icon that matches the weather condition."""
 
     text = str(condition).lower()
 
     if "thunder" in text:
-        return "⛈️"
-    if "snow" in text:
-        return "🌨️"
-    if any(word in text for word in ["rain", "drizzle", "shower"]):
-        return "🌧️"
-    if "fog" in text:
-        return "🌫️"
-    if any(word in text for word in ["cloud", "overcast"]):
-        return "☁️"
+        name = "thunderstorms-rain"
+    elif "hail" in text:
+        name = "hail"
+    elif "freezing" in text:
+        name = "sleet"
+    elif "snow" in text:
+        name = "snow"
+    elif "drizzle" in text:
+        name = "drizzle"
+    elif any(word in text for word in ["rain", "shower"]):
+        name = "rain"
+    elif "fog" in text:
+        name = "fog"
+    elif "overcast" in text:
+        name = "overcast"
+    elif "partly" in text:
+        name = "partly-cloudy-day"
+    elif "cloud" in text:
+        name = "cloudy"
+    else:
+        name = "clear-day"
 
-    return "☀️"
+    return (
+        f'<img src="{ICON_BASE_URL}{name}.svg" alt="" '
+        'style="height:1.6em;vertical-align:middle;">'
+    )
 
 
 def display_value(value, suffix=""):
@@ -624,7 +660,13 @@ with st.sidebar:
 # Re-display existing messages after every Streamlit rerun.
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+        st.markdown(
+            message["content"],
+            unsafe_allow_html=message.get("html", False),
+        )
+
+        if message.get("radar_url"):
+            st.image(message["radar_url"], caption=RADAR_CAPTION)
 
 
 user_message = st.chat_input(
@@ -643,6 +685,8 @@ if user_message:
         st.markdown(user_message)
 
     with st.chat_message("assistant"):
+        st.session_state.last_location = None
+
         with st.spinner("Checking the weather..."):
             try:
                 # Simple requests need no AI, so skip Gemini and
@@ -687,12 +731,32 @@ if user_message:
                         f"Technical details: {error}"
                     )
 
-        st.markdown(answer)
+        # Only our own weather formatter produces HTML (the animated
+        # icons), and it runs only when weather data was fetched.
+        location = st.session_state.last_location
+        allow_html = location is not None
+
+        st.markdown(answer, unsafe_allow_html=allow_html)
+
+        # Look up the radar after the answer is already on screen,
+        # so it never delays the weather text.
+        radar_url = None
+
+        if location and location.get("latitude") is not None:
+            radar_url = cached_radar_url(
+                location["latitude"],
+                location["longitude"],
+            )
+
+        if radar_url:
+            st.image(radar_url, caption=RADAR_CAPTION)
 
     st.session_state.messages.append(
         {
             "role": "assistant",
             "content": answer,
+            "html": allow_html,
+            "radar_url": radar_url,
         }
     )
 if st.session_state.weather_data_used:
@@ -711,6 +775,13 @@ if st.session_state.weather_data_used:
             (<a href="https://creativecommons.org/licenses/by/4.0/"
                 target="_blank">CC BY 4.0</a>;
             formatted for display) ·
+            Radar by
+            <a href="https://radar.weather.gov/" target="_blank">
+                NOAA / National Weather Service
+            </a>
+            · Icons by
+            <a href="https://github.com/basmilius/weather-icons"
+                target="_blank">Meteocons</a> (MIT) ·
             AI responses generated with Google Gemini
         </div>
         """,

@@ -57,6 +57,33 @@ def compass_direction(degrees):
     return points[round(float(degrees) / 22.5) % 16]
 
 
+def get_radar_url(latitude, longitude):
+    """
+    Return the National Weather Service animated radar GIF for the
+    radar station nearest to a location, or None if unavailable.
+    """
+    try:
+        response = requests.get(
+            f"https://api.weather.gov/points/"
+            f"{latitude:.4f},{longitude:.4f}",
+            # The NWS API requires a User-Agent header.
+            headers={"User-Agent": "zip-weather-agent"},
+            timeout=5
+        )
+        response.raise_for_status()
+        station = response.json()["properties"]["radarStation"]
+    except Exception:
+        return None
+
+    if not station:
+        return None
+
+    return (
+        f"https://radar.weather.gov/ridge/standard/"
+        f"{station}_loop.gif"
+    )
+
+
 def get_value(data, field, index):
     """Safely retrieve an item from an Open-Meteo result array."""
     values = data.get(field, [])
