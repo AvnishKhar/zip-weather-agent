@@ -268,6 +268,7 @@ def ask_agent(user_message, previous_interaction_id=None):
             if function_call.name == "get_weather":
                 try:
                     result = run_weather_tool(arguments)
+                    return format_weather_response(result), None
                 except Exception as error:
                    print(
                        "WEATHER TOOL ERROR:",
