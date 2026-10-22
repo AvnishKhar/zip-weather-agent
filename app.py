@@ -62,7 +62,7 @@ def read_setting(name, default=None):
 
 
 API_KEY = read_setting("GEMINI_API_KEY")
-MODEL_NAME = read_setting("GEMINI_MODEL", "gemini-3.5-flash-latest")
+MODEL_NAME = read_setting("GEMINI_MODEL", "gemini-flash-latest")
 APP_PASSWORD = read_setting("APP_PASSWORD")
 
 
@@ -226,11 +226,139 @@ def run_weather_tool(arguments):
     )
 
      # This line runs only after get_weather completes successfully.
-    st.session_state.weather_data_used = True
+    if "error" not in result:
+     st.session_state.weather_data_used = True
     print("TOOL RESULT:", result)
      
     return result
+def weather_icon(condition):
+    """Return an icon that matches the weather condition."""
 
+    text = str(condition).lower()
+
+    if "thunder" in text:
+        return "⛈️"
+    if "snow" in text:
+        return "🌨️"
+    if any(word in text for word in ["rain", "drizzle", "shower"]):
+        return "🌧️"
+    if "fog" in text:
+        return "🌫️"
+    if any(word in text for word in ["cloud", "overcast"]):
+        return "☁️"
+
+    return "☀️"
+
+
+def display_value(value, suffix=""):
+    """Display N/A when a weather value is missing."""
+
+    if value is None:
+        return "N/A"
+
+    return f"{value}{suffix}"
+
+
+def format_weather_response(result):
+    """Convert the weather dictionary into Streamlit Markdown."""
+
+    if not isinstance(result, dict):
+        return "I could not process the weather response."
+
+    if result.get("error"):
+        return f"⚠️ {result['error']}"
+
+    location = result.get("location", {})
+    city = location.get("city", "")
+    state = location.get("state", "")
+    zip_code = location.get("zip_code", "")
+
+    location_name = ", ".join(
+        value for value in [city, state] if value
+    )
+
+    heading = f"### Weather for {location_name}"
+
+    if zip_code:
+        heading += f" ({zip_code})"
+
+    sections = [heading]
+
+    current = result.get("current")
+
+    if current:
+        condition = current.get("condition", "Unknown")
+
+        sections.append(
+            "#### Current Conditions\n\n"
+            f"🕒 **Local time:** "
+            f"{current.get('time', 'N/A')}  \n"
+            f"🌡️ **Temperature:** "
+            f"{display_value(current.get('temperature_f'), '°F')} "
+            f"(feels like "
+            f"{display_value(current.get('feels_like_f'), '°F')})  \n"
+            f"{weather_icon(condition)} **Condition:** "
+            f"{condition}  \n"
+            f"💧 **Humidity:** "
+            f"{display_value(current.get('humidity_percent'), '%')}  \n"
+            f"💨 **Wind:** "
+            f"{display_value(current.get('wind_mph'), ' mph')} "
+            f"(gusts "
+            f"{display_value(current.get('wind_gust_mph'), ' mph')})"
+        )
+
+    hourly = result.get("hourly_forecast", [])
+
+    if hourly:
+        lines = []
+
+        for item in hourly:
+            condition = item.get("condition", "Unknown")
+
+            lines.append(
+                f"- **{item.get('time', 'N/A')}** — "
+                f"{weather_icon(condition)} {condition}, "
+                f"🌡️ {display_value(item.get('temperature_f'), '°F')}, "
+                f"rain "
+                f"{display_value(item.get('precipitation_probability_percent'), '%')}, "
+                f"💨 {display_value(item.get('wind_mph'), ' mph')}"
+            )
+
+        sections.append(
+            "#### Hourly Forecast\n\n" + "\n".join(lines)
+        )
+
+    daily = result.get("daily_forecast", [])
+
+    if daily:
+        lines = []
+
+        for item in daily:
+            condition = item.get("condition", "Unknown")
+
+            lines.append(
+                f"- **{item.get('date', 'N/A')}** — "
+                f"{weather_icon(condition)} {condition}; "
+                f"high "
+                f"{display_value(item.get('high_f'), '°F')}, "
+                f"low "
+                f"{display_value(item.get('low_f'), '°F')}; "
+                f"rain "
+                f"{display_value(item.get('precipitation_probability_percent'), '%')}; "
+                f"maximum wind "
+                f"{display_value(item.get('maximum_wind_mph'), ' mph')}"
+            )
+
+        sections.append(
+            "#### Daily Forecast\n\n" + "\n".join(lines)
+        )
+
+    if hourly or daily:
+        sections.append(
+            "_Forecasts farther into the future have greater uncertainty._"
+        )
+
+    return "\n\n".join(sections)
 
 def ask_agent(user_message, previous_interaction_id=None):
     """
